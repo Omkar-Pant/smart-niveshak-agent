@@ -1,7 +1,7 @@
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
-import { GoogleGenAI } from '@google/genai'; // Correct import for @google/genai
+const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 import yahooFinance from 'yahoo-finance2';
 
 dotenv.config();
