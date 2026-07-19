@@ -13,7 +13,7 @@ An intelligent, full-stack financial research discovery agent tailored for India
 *   **AI Engine:** Gemini 2.5 Flash (`@google/genai`)
 
 ## 📋 Pre-requisites & Local Setup
-Before deploying to production, ensure you have Node.js installed locally.
+Before deploying to production, ensure you have [Node.js](https://nodejs.org/) installed.
 
 1. Clone the repository:
    ```bash
