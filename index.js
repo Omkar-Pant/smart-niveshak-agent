@@ -1,7 +1,7 @@
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
-import { GoogleGenAI } from 'google-genai'; // Fixed import name
+import { GoogleGenAI } from '@google/genai';
 import yahooFinance from 'yahoo-finance2';
 import path from 'path';
 import { fileURLToPath } from 'url';
