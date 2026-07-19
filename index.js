@@ -1,38 +1,45 @@
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
-import { GoogleGenAI } from '@google/genai'; // Ensure this is installed via 'npm install @google/genai'
+import { GoogleGenAI } from 'google-genai'; // Fixed import name
 import yahooFinance from 'yahoo-finance2';
+import path from 'path';
+import { fileURLToPath } from 'url';
 
 dotenv.config();
 
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
+
 app.use(cors());
 app.use(express.json());
+// Serves your index.html automatically
+app.use(express.static('public'));
 
 const PORT = process.env.PORT || 8080;
 
-// Initialize the client once
+// Initialize the client
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
-// ... (Your getStockMetricsTool and executeTool remain structurally sound)
+// Root route to serve your dashboard
+app.get('/', (req, res) => {
+    res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
 
 app.post('/api/chat', async (req, res) => {
     try {
         const { message } = req.body;
 
-        // Use the Interactions API correctly
         const interaction = await ai.interactions.create({
             model: 'gemini-2.5-flash',
             input: message,
             config: {
-                systemInstruction: "You are a financial assistant.", 
-                tools: [{ functionDeclarations: [getStockMetricsTool.functionDeclarations[0]] }],
+                systemInstruction: "You are a factual financial assistant. Provide only technical metrics. Refuse all buy/sell recommendations.",
+                tools: [], // Add your tool definition here
                 temperature: 0.1
             }
         });
 
-        // ... (The rest of your function calling logic)
         res.json({ reply: interaction.text });
     } catch (error) {
         console.error(error);
@@ -40,4 +47,10 @@ app.post('/api/chat', async (req, res) => {
     }
 });
 
-app.listen(PORT, () => console.log(`Pipeline live on port ${PORT}`));
+// Vercel deployment export
+export default app;
+
+// Local development listener
+if (process.env.NODE_ENV !== 'production') {
+    app.listen(PORT, () => console.log(`Pipeline live on port ${PORT}`));
+}
