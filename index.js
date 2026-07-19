@@ -1,7 +1,7 @@
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
-import { GoogleGenAI } from '@google/genai';
+import { GoogleGenAI } from '@google/genai'; // Ensure this is installed via 'npm install @google/genai'
 import yahooFinance from 'yahoo-finance2';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -28,9 +28,9 @@ app.post('/api/chat', async (req, res) => {
     try {
         const { message } = req.body;
 
-        // Use the official generateContent syntax
+        // Use a current, stable model ID like 'gemini-3.5-flash'
         const response = await ai.models.generateContent({
-            model: 'gemini-2.5-flash',
+            model: 'gemini-3.5-flash',
             contents: message,
             config: {
                 systemInstruction: "You are a factual financial assistant. Provide only technical metrics. Refuse all buy/sell recommendations.",
