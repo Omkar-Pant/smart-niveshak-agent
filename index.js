@@ -1,7 +1,7 @@
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
-import { GoogleGenAI } from '@google/genai'; // Ensure this is installed via 'npm install @google/genai'
+import { GoogleGenAI } from '@google/genai';
 import yahooFinance from 'yahoo-finance2';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -28,17 +28,18 @@ app.post('/api/chat', async (req, res) => {
     try {
         const { message } = req.body;
 
-        // Use a current, stable model ID like 'gemini-3.5-flash'
+        // Use 'gemini-1.5-flash' (or your confirmed available model)
+        // Correct parameter: 'generationConfig' is the standard for the 2026 SDK
         const response = await ai.models.generateContent({
-            model: 'gemini-3.5-flash',
+            model: 'gemini-1.5-flash', 
             contents: message,
-            config: {
+            generationConfig: {
                 systemInstruction: "You are a factual financial assistant. Provide only technical metrics. Refuse all buy/sell recommendations.",
                 temperature: 0.1
             }
         });
 
-        res.json({ reply: response.text });
+        res.json({ reply: response.text() });
     } catch (error) {
         console.error("Backend Error:", error);
         res.status(500).json({ error: error.message || 'Pipeline failure.' });
