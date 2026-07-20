@@ -17,22 +17,8 @@ app.use(express.static(path.join(__dirname, 'public')));
 
 const PORT = process.env.PORT || 8080;
 
+// Initialize the Gemini client
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-
-const stockTool = {
-    name: 'getStockData',
-    description: 'Fetch real-time stock quotes, technical valuation metrics, and market data for a given ticker symbol.',
-    parameters: {
-        type: 'OBJECT',
-        properties: {
-            ticker: { 
-                type: 'STRING', 
-                description: 'The stock ticker symbol with exchange extension (e.g., TCS.NS, RELIANCE.NS, INFY.NS, AAPL)' 
-            }
-        },
-        required: ['ticker']
-    }
-};
 
 app.get('/', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'index.html'));
@@ -45,67 +31,41 @@ app.post('/api/chat', async (req, res) => {
             return res.status(400).json({ reply: 'Message payload is missing.' });
         }
 
-        // Call Gemini using gemini-3.5-flash with registered tool definitions
+        let marketContext = "";
+        const lowerMsg = message.toLowerCase();
+        
+        // Smart ticker resolution for popular Indian and global equities
+        let targetTicker = null;
+        if (lowerMsg.includes('infosys') || lowerMsg.includes('infy')) targetTicker = 'INFY.NS';
+        else if (lowerMsg.includes('tcs')) targetTicker = 'TCS.NS';
+        else if (lowerMsg.includes('reliance')) targetTicker = 'RELIANCE.NS';
+        else if (lowerMsg.includes('tata motors') || lowerMsg.includes('tatamotors')) targetTicker = 'TATAMOTORS.NS';
+        else if (lowerMsg.includes('hdfc')) targetTicker = 'HDFCBANK.NS';
+        else if (lowerMsg.includes('icici')) targetTicker = 'ICICIBANK.NS';
+
+        // Fetch live quotes directly to avoid multi-turn signature overhead
+        if (targetTicker) {
+            try {
+                const quoteData = await yahooFinance.quote(targetTicker, {}, { validateResult: false });
+                marketContext = `\n\n[Live Market Feed Data for ${targetTicker}]: ${JSON.stringify(quoteData)}`;
+            } catch (err) {
+                console.error("Yahoo Finance Fetch Warning:", err.message);
+                marketContext = `\n\n[Live Market Feed Data]: Could not fetch live stream for query, use baseline metrics.`;
+            }
+        }
+
+        // Generate comprehensive research report via single robust turn
         const response = await ai.models.generateContent({
             model: 'gemini-3.5-flash',
-            contents: message,
+            contents: message + marketContext,
             config: {
                 systemInstruction: `You are the Smart Niveshak SEBI-Compliant Financial Research Agent. 
-                - If the user mentions a specific stock or company, you MUST call the getStockData tool.
-                - Provide technical market metrics, valuation snapshots, structural chart insights, and peer comparison tables.
-                - ABSOLUTELY REFUSE all unauthorized investment advice, buy/sell recommendations, or future price target predictions.`,
-                tools: [{ functionDeclarations: [stockTool] }],
+                - Provide technical market metrics, valuation snapshots (LTP, 52-week range, market cap, P/E, EPS, Dividend Yield), structural chart insights, and industry peer comparison markdown tables.
+                - ABSOLUTELY REFUSE all unauthorized investment advice, buy/sell recommendations, or future price target predictions.
+                - Format everything professionally using markdown headers and tables.`,
                 temperature: 0.1
             }
         });
-
-        const functionCalls = response.functionCalls;
-        if (functionCalls && functionCalls.length > 0) {
-            const call = functionCalls[0];
-            
-            if (call.name === 'getStockData') {
-                const args = call.args || {};
-                let ticker = args.ticker || 'TCS.NS';
-                
-                let quoteData = {};
-                try {
-                    quoteData = await yahooFinance.quote(ticker, {}, { validateResult: false });
-                } catch (err) {
-                    console.error("Yahoo Finance Error:", err.message);
-                    quoteData = { error: `Could not retrieve data for '${ticker}'. Please ensure proper exchange suffix is used (e.g., .NS for NSE).` };
-                }
-
-                // By using response.candidates[0].content instead of a manual array reconstruction, 
-                // we preserve the required model metadata (thought_signatures) for Gemini SDK function calling.
-                const candidateContent = response.candidates?.[0]?.content;
-
-                const followUp = await ai.models.generateContent({
-                    model: 'gemini-3.5-flash',
-                    contents: [
-                        { role: 'user', parts: [{ text: message }] },
-                        candidateContent,
-                        { 
-                            role: 'function', 
-                            parts: [{ 
-                                functionResponse: { 
-                                    name: 'getStockData', 
-                                    response: { result: quoteData } 
-                                } 
-                            }] 
-                        }
-                    ],
-                    config: {
-                        systemInstruction: `You are a SEBI-compliant research engine. Format the provided quoteData into a structured research dossier containing:
-                        1. Market & Valuation Snapshot Table (LTP, 52-week range, market cap, P/E, EPS, Dividend Yield).
-                        2. Technical Analysis & Price Action Overview (Moving averages context, support/resistance observation, volume trend).
-                        3. Industry Peer Comparison (Create a clean Markdown table comparing it against 2-3 standard sector peers with estimated industry metrics).
-                        Include a strict compliance disclaimer header stating that no direct buy/sell recommendation is expressed.`
-                    }
-                });
-
-                return res.json({ reply: followUp.text });
-            }
-        }
 
         res.json({ reply: response.text || "Compliance engine processed the request." });
 
@@ -115,6 +75,8 @@ app.post('/api/chat', async (req, res) => {
     }
 });
 
-app.listen(PORT, () => console.log(`Pipeline live on port ${PORT}`));
-
 export default app;
+
+if (process.env.NODE_ENV !== 'production') {
+    app.listen(PORT, () => console.log(`Pipeline live on port ${PORT}`));
+}
