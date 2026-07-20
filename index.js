@@ -17,10 +17,8 @@ app.use(express.static(path.join(__dirname, 'public')));
 
 const PORT = process.env.PORT || 8080;
 
-// Initialize the Gemini client
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
-// Define Tool for Yahoo Finance Market Data Extraction
 const stockTool = {
     name: 'getStockData',
     description: 'Fetch real-time stock quotes, technical valuation metrics, and market data for a given ticker symbol.',
@@ -47,7 +45,7 @@ app.post('/api/chat', async (req, res) => {
             return res.status(400).json({ reply: 'Message payload is missing.' });
         }
 
-        // Step 1: Call Gemini using gemini-3.5-flash with registered tool definitions
+        // Call Gemini using gemini-3.5-flash with registered tool definitions
         const response = await ai.models.generateContent({
             model: 'gemini-3.5-flash',
             contents: message,
@@ -61,7 +59,6 @@ app.post('/api/chat', async (req, res) => {
             }
         });
 
-        // Step 2: Handle tool calls safely using SDK function declarations structure
         const functionCalls = response.functionCalls;
         if (functionCalls && functionCalls.length > 0) {
             const call = functionCalls[0];
@@ -72,19 +69,21 @@ app.post('/api/chat', async (req, res) => {
                 
                 let quoteData = {};
                 try {
-                    // Bypass strict schema validation to protect against dynamic Yahoo Finance updates
                     quoteData = await yahooFinance.quote(ticker, {}, { validateResult: false });
                 } catch (err) {
                     console.error("Yahoo Finance Error:", err.message);
                     quoteData = { error: `Could not retrieve data for '${ticker}'. Please ensure proper exchange suffix is used (e.g., .NS for NSE).` };
                 }
 
-                // Step 3: Send the tool result back to Gemini using proper multi-turn role alignment
+                // By using response.candidates[0].content instead of a manual array reconstruction, 
+                // we preserve the required model metadata (thought_signatures) for Gemini SDK function calling.
+                const candidateContent = response.candidates?.[0]?.content;
+
                 const followUp = await ai.models.generateContent({
                     model: 'gemini-3.5-flash',
                     contents: [
                         { role: 'user', parts: [{ text: message }] },
-                        { role: 'model', parts: [{ functionCall: call }] },
+                        candidateContent,
                         { 
                             role: 'function', 
                             parts: [{ 
@@ -108,18 +107,14 @@ app.post('/api/chat', async (req, res) => {
             }
         }
 
-        // Fallback for general text responses or compliance queries (ensuring reply key matches frontend expectations)
         res.json({ reply: response.text || "Compliance engine processed the request." });
 
     } catch (error) {
         console.error("Backend Error in /api/chat:", error);
-        // Always respond with JSON containing 'reply' to prevent frontend parser exceptions
         res.status(500).json({ reply: `Server encountered an execution exception: ${error.message || 'Pipeline failure.'}` });
     }
 });
 
-export default app;
+app.listen(PORT, () => console.log(`Pipeline live on port ${PORT}`));
 
-if (process.env.NODE_ENV !== 'production') {
-    app.listen(PORT, () => console.log(`Pipeline live on port ${PORT}`));
-}
+export default app;
