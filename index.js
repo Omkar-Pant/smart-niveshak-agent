@@ -1,7 +1,7 @@
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
-import OpenAI from 'openai'; // Swapped Google GenAI for OpenAI SDK (Groq compatible)
+import OpenAI from 'openai';
 import yahooFinance from 'yahoo-finance2';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -17,9 +17,14 @@ app.use(express.static(path.join(__dirname, 'public')));
 
 const PORT = process.env.PORT || 8080;
 
-// Initialize the Groq client (using Groq's base URL and your GROQ_API_KEY)
+// Initialize Groq client securely with environment validation
+const apiKey = process.env.GROQ_API_KEY;
+if (!apiKey) {
+    console.error("CRITICAL ERROR: GROQ_API_KEY environment variable is missing!");
+}
+
 const groq = new OpenAI({
-    apiKey: process.env.GROQ_API_KEY,
+    apiKey: apiKey || "missing_key",
     baseURL: 'https://api.groq.com/openai/v1',
 });
 
@@ -37,7 +42,7 @@ app.post('/api/chat', async (req, res) => {
         let marketContext = "";
         const lowerMsg = message.toLowerCase();
         
-        // Multi-stock detection mapping array with built-in fallbacks to prevent network drop 500 errors
+        // Multi-stock detection mapping array with robust fallbacks
         const trackedTickers = [
             { keywords: ['infosys', 'infy'], ticker: 'INFY.NS', fallback: { ltp: '1,850.50', highLow: '1,400.00 - 1,950.00', mCap: '7,70,000 Cr', pe: '24.5', eps: '75.50', div: '2.2%' } },
             { keywords: ['tcs', 'tata consultancy'], ticker: 'TCS.NS', fallback: { ltp: '4,120.00', highLow: '3,300.00 - 4,550.00', mCap: '14,90,000 Cr', pe: '30.2', eps: '136.40', div: '1.5%' } },
@@ -56,7 +61,6 @@ app.post('/api/chat', async (req, res) => {
             for (const item of matchedTickers) {
                 try {
                     const q = await yahooFinance.quote(item.ticker, {}, { validateResult: false });
-                    // Explicitly format key financial metrics so the LLM doesn't fall back to baseline weights
                     marketContext += `- Ticker: ${item.ticker}\n` +
                                      `  Last Traded Price (LTP): ₹${q.regularMarketPrice ?? item.fallback.ltp}\n` +
                                      `  52-Week Range: ₹${q.fiftyTwoWeekLow ?? item.fallback.highLow.split(' - ')[0]} - ₹${q.fiftyTwoWeekHigh ?? item.fallback.highLow.split(' - ')[1]}\n` +
@@ -66,7 +70,6 @@ app.post('/api/chat', async (req, res) => {
                                      `  Dividend Yield: ${q.dividendYield ? (q.dividendYield * 100).toFixed(2) + '%' : item.fallback.div}\n`;
                 } catch (err) {
                     console.warn(`Yahoo Finance Fetch Warning for ${item.ticker}:`, err.message);
-                    // Safe fallback injection so serverless functions never crash or return empty text
                     marketContext += `- Ticker: ${item.ticker}\n` +
                                      `  Last Traded Price (LTP): ₹${item.fallback.ltp}\n` +
                                      `  52-Week Range: ₹${item.fallback.highLow}\n` +
