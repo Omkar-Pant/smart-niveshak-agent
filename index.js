@@ -2,7 +2,6 @@ import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import OpenAI from 'openai';
-import axios from 'axios';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
@@ -27,7 +26,7 @@ const groq = new OpenAI({
     baseURL: 'https://api.groq.com/openai/v1',
 });
 
-// In-memory cache layer (5-minute TTL) to preserve API limits
+// In-memory cache layer (5-minute TTL)
 const marketCache = new Map();
 const CACHE_TTL_MS = 5 * 60 * 1000;
 
@@ -45,7 +44,6 @@ app.post('/api/chat', async (req, res) => {
         let marketContext = "";
         const lowerMsg = message.toLowerCase();
         
-        // Comprehensive ticker configuration dictionary supporting US and Indian markets
         const trackedTickers = [
             { keywords: ['infosys', 'infy'], ticker: 'INFY.NS' },
             { keywords: ['tcs', 'tata consultancy'], ticker: 'TCS.NS' },
@@ -69,45 +67,38 @@ app.post('/api/chat', async (req, res) => {
                 let quoteData = null;
                 const cachedEntry = marketCache.get(item.ticker);
 
-                // Check cache first to stay within API rate limits
                 if (cachedEntry && (now - cachedEntry.timestamp < CACHE_TTL_MS)) {
                     quoteData = cachedEntry.data;
                 } else {
                     try {
-                        // Using Twelve Data REST endpoint (Replace TWELVE_DATA_API_KEY in your .env file)
-                        // Get a free key at https://twelvedata.com
-                        const response = await axios.get(`https://api.twelvedata.com/quote`, {
-                            params: {
-                                symbol: item.ticker,
-                                apikey: process.env.TWELVE_DATA_API_KEY
-                            },
-                            timeout: 5000
+                        // Using native global fetch to query Yahoo Finance query API directly without broken module wrappers
+                        const url = `https://query1.finance.yahoo.com/v8/finance/chart/${item.ticker}?interval=1d`;
+                        const response = await fetch(url, {
+                            headers: { 'User-Agent': 'Mozilla/5.0' }
                         });
+                        
+                        const json = await response.json();
+                        const result = json.chart?.result?.[0];
 
-                        const data = response.data;
-
-                        if (!data || data.status === "error" || !data.close) {
-                            throw new Error(data.message || `API payload failure for ${item.ticker}`);
+                        if (!result) {
+                            throw new Error(`Invalid payload structure from market feed for ${item.ticker}`);
                         }
 
+                        const meta = result.meta;
                         quoteData = {
-                            price: data.close,
-                            high: data.high || 'N/A',
-                            low: data.low || 'N/A',
-                            volume: data.volume || 'N/A',
-                            currency: data.currency || 'INR',
-                            exchange: data.exchange || 'NSE',
-                            fiftyTwoWeekHigh: data.fifty_two_week?.high || 'N/A',
-                            fiftyTwoWeekLow: data.fifty_two_week?.low || 'N/A'
+                            price: meta.regularMarketPrice ?? meta.chartPreviousClose ?? 'N/A',
+                            high: meta.regularMarketDayHigh ?? 'N/A',
+                            low: meta.regularMarketDayLow ?? 'N/A',
+                            currency: meta.currency ?? 'INR',
+                            exchange: meta.exchangeName ?? 'NSE',
+                            fiftyTwoWeekHigh: meta.fiftyTwoWeekHigh ?? 'N/A',
+                            fiftyTwoWeekLow: meta.fiftyTwoWeekLow ?? 'N/A'
                         };
 
-                        // Store in cache
                         marketCache.set(item.ticker, { timestamp: now, data: quoteData });
-
                     } catch (apiError) {
                         console.error(`Live Fetch Error for ${item.ticker}:`, apiError.message);
                         
-                        // Fail gracefully if cache exists, otherwise abort to prevent fake data
                         if (cachedEntry) {
                             quoteData = cachedEntry.data;
                         } else {
@@ -121,12 +112,10 @@ app.post('/api/chat', async (req, res) => {
                 marketContext += `- Asset Ticker: ${item.ticker} (${quoteData.exchange})\n` +
                                  `  Last Traded Price (LTP): ${quoteData.currency === 'INR' ? '₹' : '$'}${quoteData.price}\n` +
                                  `  Day High / Low: ${quoteData.high} / ${quoteData.low}\n` +
-                                 `  52-Week Range: ${quoteData.fiftyTwoWeekLow} - ${quoteData.fiftyTwoWeekHigh}\n` +
-                                 `  Volume: ${quoteData.volume}\n`;
+                                 `  52-Week Range: ${quoteData.fiftyTwoWeekLow} - ${quoteData.fiftyTwoWeekHigh}\n`;
             }
         }
 
-        // Generate response via Groq
         const completion = await groq.chat.completions.create({
             model: 'llama-3.3-70b-versatile',
             messages: [
