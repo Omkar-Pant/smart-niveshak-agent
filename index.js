@@ -68,41 +68,19 @@ app.post('/api/chat', async (req, res) => {
             }
         }
 
-        // Try generating content with gemini-3.5-flash, fallback to gemini-2.5-flash if rate-limited
-        let response;
-        try {
-            response = await ai.models.generateContent({
-                model: 'gemini-3.5-flash',
-                contents: message + marketContext,
-                config: {
-                    systemInstruction: `You are the Smart Niveshak SEBI-Compliant Financial Research Agent. 
-                    - CRITICAL MANDATE: If '[Live Market Feed Data]' is provided in the prompt, you MUST use those exact live values for your valuation snapshot tables and metrics. Never override live data with outdated baseline or training memory figures.
-                    - Provide technical market metrics, valuation snapshots (LTP, 52-week range, market cap, P/E, EPS, Dividend Yield), structural chart insights, and industry peer comparison markdown tables.
-                    - ABSOLUTELY REFUSE all unauthorized investment advice, buy/sell recommendations, or future price target predictions.
-                    - Format everything professionally using markdown headers and tables.`,
-                    temperature: 0.1
-                }
-            });
-        } catch (apiError) {
-            // Fallback layer in case the free tier quota limit is hit on the primary model
-            if (apiError.status === 'RESOURCE_EXHAUSTED' || (apiError.message && apiError.message.includes('429'))) {
-                console.warn("Primary model rate limit hit. Falling back to alternative model route...");
-                response = await ai.models.generateContent({
-                    model: 'gemini-2.5-flash',
-                    contents: message + marketContext,
-                    config: {
-                        systemInstruction: `You are the Smart Niveshak SEBI-Compliant Financial Research Agent. 
-                        - CRITICAL MANDATE: If '[Live Market Feed Data]' is provided in the prompt, you MUST use those exact live values for your valuation snapshot tables and metrics. Never override live data with outdated baseline or training memory figures.
-                        - Provide technical market metrics, valuation snapshots (LTP, 52-week range, market cap, P/E, EPS, Dividend Yield), structural chart insights, and industry peer comparison markdown tables.
-                        - ABSOLUTELY REFUSE all unauthorized investment advice, buy/sell recommendations, or future price target predictions.
-                        - Format everything professionally using markdown headers and tables.`,
-                        temperature: 0.1
-                    }
-                });
-            } else {
-                throw apiError;
+        // Generate content using gemini-3.5-flash with fallback to gemini-2.5-flash removed completely
+        const response = await ai.models.generateContent({
+            model: 'gemini-3.5-flash',
+            contents: message + marketContext,
+            config: {
+                systemInstruction: `You are the Smart Niveshak SEBI-Compliant Financial Research Agent. 
+                - CRITICAL MANDATE: If '[Live Market Feed Data]' is provided in the prompt, you MUST use those exact live values for your valuation snapshot tables and metrics. Never override live data with outdated baseline or training memory figures.
+                - Provide technical market metrics, valuation snapshots (LTP, 52-week range, market cap, P/E, EPS, Dividend Yield), structural chart insights, and industry peer comparison markdown tables.
+                - ABSOLUTELY REFUSE all unauthorized investment advice, buy/sell recommendations, or future price target predictions.
+                - Format everything professionally using markdown headers and tables.`,
+                temperature: 0.1
             }
-        }
+        });
 
         res.json({ reply: response.text || "Compliance engine processed the request." });
 
