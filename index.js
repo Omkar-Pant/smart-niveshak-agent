@@ -40,9 +40,12 @@ app.get('/', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
-app.post('/api/chat', async (req, res) => {
+app.post('/api/chat', async, async (req, res) => {
     try {
         const { message } = req.body;
+        if (!message) {
+            return res.status(400).json({ reply: 'Message payload is missing.' });
+        }
 
         // Step 1: Call Gemini using gemini-3.5-flash with registered tool definitions
         const response = await ai.models.generateContent({
@@ -50,6 +53,7 @@ app.post('/api/chat', async (req, res) => {
             contents: message,
             config: {
                 systemInstruction: `You are the Smart Niveshak SEBI-Compliant Financial Research Agent. 
+                - If the user mentions a specific stock or company, you MUST call the getStockData tool.
                 - Provide technical market metrics, valuation snapshots, structural chart insights, and peer comparison tables.
                 - ABSOLUTELY REFUSE all unauthorized investment advice, buy/sell recommendations, or future price target predictions.`,
                 tools: [{ functionDeclarations: [stockTool] }],
@@ -57,29 +61,39 @@ app.post('/api/chat', async (req, res) => {
             }
         });
 
-        // Step 2: Handle tool calls if the model triggers data extraction
+        // Step 2: Handle tool calls safely using SDK function declarations structure
         const functionCalls = response.functionCalls;
         if (functionCalls && functionCalls.length > 0) {
             const call = functionCalls[0];
             
             if (call.name === 'getStockData') {
-                const ticker = call.args.ticker;
-                let quoteData = {};
+                const args = call.args || {};
+                let ticker = args.ticker || 'TCS.NS';
                 
+                let quoteData = {};
                 try {
-                    quoteData = await yahooFinance.quote(ticker);
+                    // Bypass strict schema validation to protect against dynamic Yahoo Finance updates
+                    quoteData = await yahooFinance.quote(ticker, {}, { validateResult: false });
                 } catch (err) {
-                    console.error("Yahoo Finance Error:", err);
-                    quoteData = { error: "Unable to fetch live feed for this symbol. Verify ticker format (e.g., TCS.NS)." };
+                    console.error("Yahoo Finance Error:", err.message);
+                    quoteData = { error: `Could not retrieve data for '${ticker}'. Please ensure proper exchange suffix is used (e.g., .NS for NSE).` };
                 }
 
-                // Step 3: Send the tool result back to Gemini to build the structured report
+                // Step 3: Send the tool result back to Gemini using proper multi-turn role alignment
                 const followUp = await ai.models.generateContent({
                     model: 'gemini-3.5-flash',
                     contents: [
                         { role: 'user', parts: [{ text: message }] },
                         { role: 'model', parts: [{ functionCall: call }] },
-                        { role: 'function', parts: [{ functionResponse: { name: 'getStockData', response: { quoteData } } }] }
+                        { 
+                            role: 'function', 
+                            parts: [{ 
+                                functionResponse: { 
+                                    name: 'getStockData', 
+                                    response: { result: quoteData } 
+                                } 
+                            }] 
+                        }
                     ],
                     config: {
                         systemInstruction: `You are a SEBI-compliant research engine. Format the provided quoteData into a structured research dossier containing:
@@ -94,12 +108,13 @@ app.post('/api/chat', async (req, res) => {
             }
         }
 
-        // Fallback for general text responses or compliance queries
-        res.json({ reply: response.text });
+        // Fallback for general text responses or compliance queries (ensuring reply key matches frontend expectations)
+        res.json({ reply: response.text || "Compliance engine processed the request." });
 
     } catch (error) {
-        console.error("Backend Error:", error);
-        res.status(500).json({ error: error.message || 'Pipeline failure processing request.' });
+        console.error("Backend Error in /api/chat:", error);
+        // Always respond with JSON containing 'reply' to prevent frontend parser exceptions
+        res.status(500).json({ reply: `Server encountered an execution exception: ${error.message || 'Pipeline failure.'}` });
     }
 });
 
