@@ -1,7 +1,7 @@
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
-import { GoogleGenAI } from '@google/genai'; 
+import OpenAI from 'openai'; // Swapped Google GenAI for OpenAI SDK (Groq compatible)
 import yahooFinance from 'yahoo-finance2';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -17,8 +17,11 @@ app.use(express.static(path.join(__dirname, 'public')));
 
 const PORT = process.env.PORT || 8080;
 
-// Initialize the Gemini client
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+// Initialize the Groq client (using Groq's base URL and your GROQ_API_KEY)
+const groq = new OpenAI({
+    apiKey: process.env.GROQ_API_KEY,
+    baseURL: 'https://api.groq.com/openai/v1',
+});
 
 app.get('/', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'index.html'));
@@ -68,21 +71,28 @@ app.post('/api/chat', async (req, res) => {
             }
         }
 
-        // Generate content using gemini-3.5-flash with fallback to gemini-2.5-flash removed completely
-        const response = await ai.models.generateContent({
-            model: 'gemini-3.5-flash',
-            contents: message + marketContext,
-            config: {
-                systemInstruction: `You are the Smart Niveshak SEBI-Compliant Financial Research Agent. 
-                - CRITICAL MANDATE: If '[Live Market Feed Data]' is provided in the prompt, you MUST use those exact live values for your valuation snapshot tables and metrics. Never override live data with outdated baseline or training memory figures.
-                - Provide technical market metrics, valuation snapshots (LTP, 52-week range, market cap, P/E, EPS, Dividend Yield), structural chart insights, and industry peer comparison markdown tables.
-                - ABSOLUTELY REFUSE all unauthorized investment advice, buy/sell recommendations, or future price target predictions.
-                - Format everything professionally using markdown headers and tables.`,
-                temperature: 0.1
-            }
+        // Generate content using Groq's Llama 3 model
+        const completion = await groq.chat.completions.create({
+            model: 'llama-3.3-70b-versatile',
+            messages: [
+                {
+                    role: 'system',
+                    content: `You are the Smart Niveshak SEBI-Compliant Financial Research Agent. 
+                    - CRITICAL MANDATE: If '[Live Market Feed Data]' is provided in the prompt, you MUST use those exact live values for your valuation snapshot tables and metrics. Never override live data with outdated baseline or training memory figures.
+                    - Provide technical market metrics, valuation snapshots (LTP, 52-week range, market cap, P/E, EPS, Dividend Yield), structural chart insights, and industry peer comparison markdown tables.
+                    - ABSOLUTELY REFUSE all unauthorized investment advice, buy/sell recommendations, or future price target predictions.
+                    - Format everything professionally using markdown headers and tables.`
+                },
+                {
+                    role: 'user',
+                    content: message + marketContext
+                }
+            ],
+            temperature: 0.1
         });
 
-        res.json({ reply: response.text || "Compliance engine processed the request." });
+        const replyText = completion.choices[0]?.message?.content || "Compliance engine processed the request.";
+        res.json({ reply: replyText });
 
     } catch (error) {
         console.error("Backend Error in /api/chat:", error);
