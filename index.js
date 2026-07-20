@@ -68,9 +68,9 @@ app.post('/api/chat', async (req, res) => {
             }
         }
 
-        // Generate comprehensive research report via single robust turn with strict enforcement instruction
+        // Generate comprehensive research report via single robust turn with strict enforcement instruction using gemini-3.5-flash
         const response = await ai.models.generateContent({
-            model: 'gemini-2.5-flash',
+            model: 'gemini-3.5-flash',
             contents: message + marketContext,
             config: {
                 systemInstruction: `You are the Smart Niveshak SEBI-Compliant Financial Research Agent. 
