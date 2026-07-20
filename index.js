@@ -17,7 +17,6 @@ app.use(express.static(path.join(__dirname, 'public')));
 
 const PORT = process.env.PORT || 8080;
 
-// Initialize Groq client securely with environment validation
 const apiKey = process.env.GROQ_API_KEY;
 if (!apiKey) {
     console.error("CRITICAL ERROR: GROQ_API_KEY environment variable is missing!");
@@ -27,6 +26,10 @@ const groq = new OpenAI({
     apiKey: apiKey || "missing_key",
     baseURL: 'https://api.groq.com/openai/v1',
 });
+
+// Simple In-Memory Cache Store with 5-Minute TTL to prevent rate limits
+const marketCache = new Map();
+const CACHE_TTL_MS = 5 * 60 * 1000; 
 
 app.get('/', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'index.html'));
@@ -42,14 +45,14 @@ app.post('/api/chat', async (req, res) => {
         let marketContext = "";
         const lowerMsg = message.toLowerCase();
         
-        // Multi-stock detection mapping array with robust fallbacks
+        // Tracked tickers mapping array
         const trackedTickers = [
-            { keywords: ['infosys', 'infy'], ticker: 'INFY.NS', fallback: { ltp: '1,850.50', highLow: '1,400.00 - 1,950.00', mCap: '7,70,000 Cr', pe: '24.5', eps: '75.50', div: '2.2%' } },
-            { keywords: ['tcs', 'tata consultancy'], ticker: 'TCS.NS', fallback: { ltp: '4,120.00', highLow: '3,300.00 - 4,550.00', mCap: '14,90,000 Cr', pe: '30.2', eps: '136.40', div: '1.5%' } },
-            { keywords: ['reliance'], ticker: 'RELIANCE.NS', fallback: { ltp: '1,280.00', highLow: '1,100.00 - 1,600.00', mCap: '17,30,000 Cr', pe: '28.1', eps: '45.60', div: '0.4%' } },
-            { keywords: ['tata motors', 'tatamotors'], ticker: 'TATAMOTORS.NS', fallback: { ltp: '745.20', highLow: '600.00 - 1,179.00', mCap: '2,74,000 Cr', pe: '10.5', eps: '70.90', div: '0.8%' } },
-            { keywords: ['hdfc'], ticker: 'HDFCBANK.NS', fallback: { ltp: '1,720.50', highLow: '1,380.00 - 1,795.00', mCap: '13,10,000 Cr', pe: '19.8', eps: '86.80', div: '1.1%' } },
-            { keywords: ['icici'], ticker: 'ICICIBANK.NS', fallback: { ltp: '1,240.00', highLow: '990.00 - 1,350.00', mCap: '8,70,000 Cr', pe: '18.4', eps: '67.40', div: '0.8%' } }
+            { keywords: ['infosys', 'infy'], ticker: 'INFY.NS' },
+            { keywords: ['tcs', 'tata consultancy'], ticker: 'TCS.NS' },
+            { keywords: ['reliance'], ticker: 'RELIANCE.NS' },
+            { keywords: ['tata motors', 'tatamotors'], ticker: 'TATAMOTORS.NS' },
+            { keywords: ['hdfc'], ticker: 'HDFCBANK.NS' },
+            { keywords: ['icici'], ticker: 'ICICIBANK.NS' }
         ];
 
         const matchedTickers = trackedTickers.filter(item => 
@@ -58,26 +61,48 @@ app.post('/api/chat', async (req, res) => {
 
         if (matchedTickers.length > 0) {
             marketContext += "\n\n[Live Market Feed Data fetched directly from NSE Exchange]:\n";
+            const now = Date.now();
+
             for (const item of matchedTickers) {
-                try {
-                    const q = await yahooFinance.quote(item.ticker, {}, { validateResult: false });
-                    marketContext += `- Ticker: ${item.ticker}\n` +
-                                     `  Last Traded Price (LTP): ₹${q.regularMarketPrice ?? item.fallback.ltp}\n` +
-                                     `  52-Week Range: ₹${q.fiftyTwoWeekLow ?? item.fallback.highLow.split(' - ')[0]} - ₹${q.fiftyTwoWeekHigh ?? item.fallback.highLow.split(' - ')[1]}\n` +
-                                     `  Market Cap: ₹${q.marketCap ? (q.marketCap / 1e7).toFixed(2) + ' Cr' : item.fallback.mCap}\n` +
-                                     `  P/E Ratio: ${q.trailingPE ?? item.fallback.pe}\n` +
-                                     `  EPS (TTM): ₹${q.epsTrailingTwelveMonths ?? item.fallback.eps}\n` +
-                                     `  Dividend Yield: ${q.dividendYield ? (q.dividendYield * 100).toFixed(2) + '%' : item.fallback.div}\n`;
-                } catch (err) {
-                    console.warn(`Yahoo Finance Fetch Warning for ${item.ticker}:`, err.message);
-                    marketContext += `- Ticker: ${item.ticker}\n` +
-                                     `  Last Traded Price (LTP): ₹${item.fallback.ltp}\n` +
-                                     `  52-Week Range: ₹${item.fallback.highLow}\n` +
-                                     `  Market Cap: ₹${item.fallback.mCap}\n` +
-                                     `  P/E Ratio: ${item.fallback.pe}\n` +
-                                     `  EPS (TTM): ₹${item.fallback.eps}\n` +
-                                     `  Dividend Yield: ${item.fallback.div}\n`;
+                let q = null;
+                const cachedEntry = marketCache.get(item.ticker);
+
+                // Check if valid cache exists within TTL window
+                if (cachedEntry && (now - cachedEntry.timestamp < CACHE_TTL_MS)) {
+                    q = cachedEntry.data;
+                } else {
+                    try {
+                        // Strict live fetch with no fallback constants
+                        q = await yahooFinance.quote(item.ticker, {}, { validateResult: false });
+                        
+                        if (!q || q.regularMarketPrice === undefined) {
+                            throw new Error(`Live quote returned empty values for ${item.ticker}`);
+                        }
+
+                        // Store fresh response in cache
+                        marketCache.set(item.ticker, { timestamp: now, data: q });
+                    } catch (err) {
+                        console.error(`Live Feed Error for ${item.ticker}:`, err.message);
+                        
+                        // Fallback to stale cache if available, otherwise abort safely
+                        if (cachedEntry) {
+                            console.warn(`Serving stale cached data for ${item.ticker} due to network timeout.`);
+                            q = cachedEntry.data;
+                        } else {
+                            return res.status(502).json({ 
+                                reply: `⚠️ **Live Feed Connection Error:** Unable to establish a real-time connection with the NSE exchange for ${item.ticker}. Operation aborted to prevent outdated reporting.` 
+                            });
+                        }
+                    }
                 }
+
+                marketContext += `- Ticker: ${item.ticker}\n` +
+                                 `  Last Traded Price (LTP): ₹${q.regularMarketPrice}\n` +
+                                 `  52-Week Range: ₹${q.fiftyTwoWeekLow ?? 'N/A'} - ₹${q.fiftyTwoWeekHigh ?? 'N/A'}\n` +
+                                 `  Market Cap: ₹${q.marketCap ? (q.marketCap / 1e7).toFixed(2) + ' Cr' : 'N/A'}\n` +
+                                 `  P/E Ratio: ${q.trailingPE ?? 'N/A'}\n` +
+                                 `  EPS (TTM): ₹${q.epsTrailingTwelveMonths ?? 'N/A'}\n` +
+                                 `  Dividend Yield: ${q.dividendYield ? (q.dividendYield * 100).toFixed(2) + '%' : 'N/A'}\n`;
             }
         }
 
